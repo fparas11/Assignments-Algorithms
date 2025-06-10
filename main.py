@@ -10,7 +10,7 @@ def load_karate_graph() -> nx.Graph:
     # The file is a simple edgelist with a header.
     # We will build the graph manually to correctly handle the header.
     G = nx.Graph()
-    with open('karateclub.txt', 'r') as f:
+    with open('input_data/karateclub.txt', 'r') as f:
         next(f) # Skip header line
         for line in f:
             # handle potential empty lines at the end of the file
