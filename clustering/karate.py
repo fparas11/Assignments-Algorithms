@@ -200,68 +200,144 @@ def _split_component(graph: nx.Graph) -> Tuple[nx.Graph, nx.Graph]:
     
     return subgraph1, subgraph2
 
-def cluster(graph: nx.Graph) -> Tuple[List[nx.Graph], List[Dict[str, Any]]]:
+def _recursive_cluster(graph_component: nx.Graph, split_log: list, level: int) -> List[nx.Graph]:
+    """
+    A helper function that implements the recursive clustering logic.
+    It populates a flat log of all split events.
+    """
+    # --- Termination Conditions ---
+    if len(graph_component) < MIN_CLUSTER_SIZE or _is_clique(graph_component):
+        return [graph_component]
+
+    # --- Recursive Step ---
+    subgraph1, subgraph2 = _split_component(graph_component)
+
+    if subgraph2 is None:
+        return [graph_component]
+
+    # Log the split event for later processing
+    if split_log is not None:
+        split_log.append({
+            'level': level,
+            'parent': graph_component,
+            'children': [subgraph1, subgraph2],
+            'timestamp': time.time()
+        })
+
+    # Recurse on the two new sub-components
+    clusters1 = _recursive_cluster(subgraph1, split_log, level + 1)
+    clusters2 = _recursive_cluster(subgraph2, split_log, level + 1)
+
+    return clusters1 + clusters2
+
+def cluster(graph: nx.Graph) -> Tuple[List[nx.Graph], List[Dict[str, Any]], np.ndarray]:
     """
     Corresponds to: "Αναδρομική_Ομαδοποίηση"
-    This function uses an iterative approach, which is equivalent to recursion
-    but avoids Python's recursion depth limits. It repeatedly tries to split
-    all current components until no more splits are possible.
+    This function uses a recursive approach to repeatedly split graph components.
+    It serves as the entry point that initializes the clustering process on the
+    largest connected component of the input graph, and then processes the
+    results to build a history and a linkage matrix for plotting.
+
+    Returns:
+        - final_clusters: A list of graph objects, one for each final cluster.
+        - history: A list of dictionaries with statistics for each level.
+        - linkage_matrix: A NumPy array suitable for scipy's dendrogram function.
     """
     # --- Step A: Find the largest connected component ---
-    # This replaces the nx.is_connected and nx.connected_components calls
-    # with our own implementation as per the report's Step A.
     components = _get_connected_components(graph)
     if not components:
-        return [], []  # Handle empty graph case
+        return [], [], None
 
-    largest_cc_nodes = max(components, key=len)
-    graph = graph.subgraph(largest_cc_nodes).copy()
-        
-    clusters = [graph]
-    history = []
-    start_time = time.time()
+    main_component = graph.subgraph(max(components, key=len)).copy()
     
-    # Log initial state (level 0)
+    start_time = time.time()
+    split_log = []
+    final_clusters = _recursive_cluster(main_component, split_log, level=1)
+    
+    # --- Post-processing 1: Build level-by-level history from the split log ---
+    history = []
     history.append({
-        'level': 0, 'component_sizes': [len(g) for g in clusters],
-        'largest_component': max([len(g) for g in clusters]),
-        'avg_component_size': np.mean([len(g) for g in clusters]), 'time': 0
+        'level': 0, 'component_sizes': [len(main_component)],
+        'largest_component': len(main_component),
+        'avg_component_size': float(len(main_component)), 'time': 0
     })
 
-    level = 0
-    while True:
-        level += 1
-        new_clusters = []
-        did_split = False
-        
-        # Try to split each component from the previous level.
-        for component in clusters:
-            # --- Termination Conditions ---
-            if len(component) < MIN_CLUSTER_SIZE or _is_clique(component):
-                new_clusters.append(component)
-                continue
+    if not split_log:
+        return final_clusters, history, None
 
-            # --- Recursive Step (implemented as a call) ---
-            subgraph1, subgraph2 = _split_component(component)
+    max_level = max(s['level'] for s in split_log)
+    clusters_at_level = {0: [main_component]}
+    last_timestamp = start_time
 
-            if subgraph2 is None:
-                new_clusters.append(component)
-            else:
-                new_clusters.extend([subgraph1, subgraph2])
-                did_split = True
+    for level in range(1, max_level + 2):
+        prev_level_clusters = clusters_at_level.get(level - 1, [])
+        if not prev_level_clusters:
+            break
 
-        clusters = new_clusters
+        splits_this_level = [s for s in split_log if s['level'] == level]
+        parents_split_at_this_level = {s['parent'] for s in splits_this_level}
         
-        # Log state for the current level.
-        history.append({
-            'level': level, 'component_sizes': [len(g) for g in clusters],
-            'largest_component': max([len(g) for g in clusters]),
-            'avg_component_size': np.mean([len(g) for g in clusters]),
-            'time': time.time() - start_time
-        })
+        current_level_clusters = []
+        if splits_this_level:
+            last_timestamp = max(s['timestamp'] for s in splits_this_level)
+            for s in splits_this_level:
+                current_level_clusters.extend(s['children'])
         
-        # If no component was split in this iteration, the process is complete.
-        if not did_split:
+        for comp in prev_level_clusters:
+            if comp not in parents_split_at_this_level:
+                current_level_clusters.append(comp)
+
+        if not current_level_clusters:
             break
             
-    return clusters, history 
+        clusters_at_level[level] = current_level_clusters
+        
+        sizes = [len(c) for c in current_level_clusters]
+        history.append({
+            'level': level, 'component_sizes': sizes,
+            'largest_component': max(sizes), 'avg_component_size': np.mean(sizes),
+            'time': last_timestamp - start_time
+        })
+
+    # --- Post-processing 2: Build linkage matrix for dendrogram ---
+    linkage_matrix = None
+    
+    if final_clusters and split_log:
+        # This maps a frozenset of nodes (a cluster) to its linkage ID and
+        # its count in terms of the number of *final clusters* it contains.
+        cluster_to_info = {
+            frozenset(c.nodes()): (i, 1) for i, c in enumerate(final_clusters)
+        }
+        
+        next_cluster_id = len(final_clusters)
+        linkage_rows = []
+        
+        # Sort splits by level, descending, to process from leaves up to the root
+        sorted_splits = sorted(split_log, key=lambda s: s['level'], reverse=True)
+
+        for split in sorted_splits:
+            level = split['level']
+            parent_nodes = frozenset(split['parent'].nodes())
+            child1_nodes = frozenset(split['children'][0].nodes())
+            child2_nodes = frozenset(split['children'][1].nodes())
+
+            # Get the IDs and leaf counts of the two children being "merged"
+            id1, count1 = cluster_to_info[child1_nodes]
+            id2, count2 = cluster_to_info[child2_nodes]
+            
+            # Distance is defined based on the split level
+            distance = float(max_level - level + 1)
+            
+            # The new count is the sum of the child counts (in terms of final clusters)
+            new_count = count1 + count2
+            
+            linkage_rows.append([id1, id2, distance, new_count])
+            
+            # The parent cluster gets a new ID and the combined count
+            cluster_to_info[parent_nodes] = (next_cluster_id, new_count)
+            next_cluster_id += 1
+                
+        if linkage_rows:
+            linkage_matrix = np.array(linkage_rows)
+
+    return final_clusters, history, linkage_matrix

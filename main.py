@@ -21,6 +21,34 @@ def load_karate_graph() -> nx.Graph:
             G.add_edge(u, v, weight=1)
     return G
 
+def log_clustering_history(history: list):
+    """Prints the clustering history in a structured format."""
+    print("\n" + "="*50)
+    print(" " * 10 + "Clustering Execution Summary")
+    print("="*50)
+    
+    if not history:
+        print("No history data to display.")
+        return
+
+    for entry in history:
+        level = entry['level']
+        sizes = sorted(entry['component_sizes'], reverse=True)
+        num_components = len(sizes)
+        largest_comp = entry['largest_component']
+        avg_size = entry['avg_component_size']
+        exec_time = entry['time']
+
+        print(f"\n----- Level {level} -----")
+        print(f"  - Components: {num_components}")
+        print(f"  - Largest Component: {largest_comp} nodes")
+        print(f"  - Average Size: {avg_size:.2f} nodes")
+        print(f"  - Time Elapsed: {exec_time:.4f}s")
+        if num_components > 1:
+            print(f"  - All Component Sizes: {sizes}")
+            
+    print("\n" + "="*50)
+
 def main():
     """Main function to run the clustering and plotting."""
     parser = argparse.ArgumentParser(description="Graph Clustering Algorithms")
@@ -29,9 +57,9 @@ def main():
         choices=['karate', 'powergrid', 'erdos'],
         help='The dataset to run the clustering algorithm on.'
     )
-    #args = parser.parse_args().dataset
-    #dataset = args.dataset 
+    #args = parser.parse_args()
     dataset = 'karate'
+
     print(f"Running clustering for the '{dataset}' dataset...")
 
     graph = None
@@ -54,12 +82,22 @@ def main():
         return
 
     # Run the clustering algorithm
-    final_clusters, history = cluster_func(graph)
+    results = cluster_func(graph)
+
+    linkage_matrix = None
+    if dataset == 'karate':
+        final_clusters, history, linkage_matrix = results
+    else:
+        final_clusters, history = results
+
+    # Log the results to the console
+    if history:
+        log_clustering_history(history)
 
     # Generate plots if history is available
     if history:
         print("\nClustering complete. Generating plots...")
-        generate_plots(history, dataset)
+        generate_plots(history, linkage_matrix, final_clusters, dataset)
         print(f"\nFound {len(final_clusters)} final clusters.")
         print("Final cluster sizes:", [len(c) for c in final_clusters])
     else:

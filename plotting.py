@@ -2,6 +2,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import List, Dict, Any
 import os
+import numpy as np
+from scipy.cluster.hierarchy import dendrogram
+import networkx as nx
 
 # Set a consistent and professional style for the plots
 sns.set_theme(style="whitegrid")
@@ -13,28 +16,47 @@ def _setup_plot(title: str, xlabel: str, ylabel: str, ax) -> None:
     ax.set_ylabel(ylabel, fontsize=12)
     ax.tick_params(axis='both', which='major', labelsize=10)
 
-def plot_component_evolution(history: List[Dict[str, Any]], output_dir: str) -> None:
+def plot_dendrogram(linkage_matrix: np.ndarray, final_clusters: List[nx.Graph], output_dir: str) -> None:
     """
-    Generates a plot showing the size of each component at each level of recursion.
-    This creates a single figure with multiple subplots.
+    Generates and saves a dendrogram plot from a linkage matrix.
     """
-    levels = len(history)
-    fig, axes = plt.subplots(levels, 1, figsize=(10, 3 * levels), sharex=True)
-    if levels == 1: # If only one level, axes is not a list
-        axes = [axes]
-
-    fig.suptitle('Evolution of Component Sizes per Recursion Level', fontsize=20, weight='bold')
-
-    for i, data in enumerate(history):
-        level = data['level']
-        sizes = sorted(data['component_sizes'], reverse=True)
+    if linkage_matrix is None or len(linkage_matrix) == 0:
+        print("Skipping dendrogram plot: no linkage data available.")
+        return
         
-        sns.barplot(x=list(range(len(sizes))), y=sizes, ax=axes[i], palette="viridis")
-        _setup_plot(f'Level {level}', 'Component Index', 'Number of Nodes', axes[i])
-        axes[i].bar_label(axes[i].containers[0])
+    if not final_clusters:
+        print("Skipping dendrogram plot: final_clusters not available for labeling.")
+        return
 
-    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-    filename = os.path.join(output_dir, '1_component_evolution.png')
+    fig, ax = plt.subplots(figsize=(15, 8))
+    
+    # This function will be called for each leaf of the dendrogram.
+    # The leaf ID `i` corresponds to the index in our final_clusters list.
+    def leaf_label_func(i):
+        # Make sure the index is within the bounds of the list
+        if i < len(final_clusters):
+            cluster_size = len(final_clusters[i].nodes())
+            return f"Size: {cluster_size}"
+        return str(i)
+
+    dendrogram(
+        linkage_matrix,
+        ax=ax,
+        orientation='top',
+        leaf_label_func=leaf_label_func,
+        leaf_font_size=8.,
+        show_leaf_counts=False, # Our custom labels are better
+    )
+    
+    _setup_plot(
+        'Hierarchical Clustering Dendrogram',
+        'Cluster/Node Index',
+        'Distance (Proportional to Recursion Depth)',
+        ax
+    )
+    ax.grid(axis='y', linestyle='--')
+    plt.tight_layout()
+    filename = os.path.join(output_dir, '1_dendrogram.png')
     plt.savefig(filename)
     plt.close()
     print(f"Saved plot to {filename}")
@@ -106,17 +128,24 @@ def plot_time_per_level(history: List[Dict[str, Any]], output_dir: str) -> None:
     plt.close()
     print(f"Saved plot to {filename}")
 
-def generate_plots(history: List[Dict[str, Any]], dataset_name: str) -> None:
+def generate_plots(history: List[Dict[str, Any]], linkage_matrix: np.ndarray, final_clusters: List[nx.Graph], dataset_name: str) -> None:
     """Main function to generate all required plots."""
-    if not history or len(history) < 2:
-        print("Not enough history data to generate plots.")
+    if not history:
+        print("Not enough history data to generate any plots.")
         return
 
     output_dir = f"plots_{dataset_name}"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    plot_component_evolution(history, output_dir)
+    # Plot 1: Dendrogram (replaces component evolution)
+    plot_dendrogram(linkage_matrix, final_clusters, output_dir)
+    
+    # Check for other plots that require more than one history entry
+    if len(history) < 2:
+        print("Not enough history data to generate evolution plots (avg size, etc.).")
+        return
+
     plot_avg_size(history, output_dir)
     plot_largest_size(history, output_dir)
     plot_time_per_level(history, output_dir) 
