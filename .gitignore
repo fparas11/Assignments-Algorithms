@@ -1,0 +1,11 @@
+# Python specific
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Generated plot directories
+plots_*/
+
+# Other generated files
+*.pdf 
