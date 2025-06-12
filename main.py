@@ -1,107 +1,123 @@
-import argparse
 import networkx as nx
+from typing import List, Dict, Any
 
 # Import the clustering modules from our package
 from clustering import karate, powergrid, erdos
 from plotting import generate_plots
 
 def load_karate_graph() -> nx.Graph:
-    """Loads the Karate Club graph from the text file."""
-    # The file is a simple edgelist with a header.
-    # We will build the graph manually to correctly handle the header.
+    """Loads the Karate Club graph from its edgelist file."""
     G = nx.Graph()
     with open('input_data/karateclub.txt', 'r') as f:
-        next(f) # Skip header line
+        next(f)  # Skip header line
         for line in f:
-            # handle potential empty lines at the end of the file
             if not line.strip():
                 continue
             u, v = map(int, line.strip().split(','))
-            # Add weight=1, which will be used as 'capacity' in the min-cut algorithm
             G.add_edge(u, v, weight=1)
     return G
 
-def log_clustering_history(history: list):
-    """Prints the clustering history in a structured format."""
-    print("\n" + "="*50)
-    print(" " * 10 + "Clustering Execution Summary")
-    print("="*50)
+def load_powergrid_graph() -> nx.Graph:
+    """Loads the Powergrid graph from its edgelist file."""
+    # The file is a simple space-separated edgelist. We load it and then
+    # assign a default weight of 1 to every edge for the min-cut algorithm.
+    G = nx.read_edgelist(
+        'input_data/powergrid.txt',
+        create_using=nx.Graph(),
+        nodetype=int
+    )
+    nx.set_edge_attributes(G, 1, name='weight')
+    return G
+
+def load_erdos_graph() -> nx.Graph:
+    """Loads the Erdos graph from its edgelist file."""
+    # The file is a simple tab-separated edgelist. We load it and then
+    # assign a default weight of 1 to every edge for the min-cut algorithm.
+    G = nx.read_edgelist(
+        'input_data/erdos.txt',
+        create_using=nx.Graph(),
+        nodetype=int,
+        delimiter='\t'
+    )
+    nx.set_edge_attributes(G, 1, name='weight')
+    return G
+
+def log_clustering_history(history: List[Dict[str, Any]]) -> None:
+    """Logs the clustering history to the console."""
+    print("\n----- Clustering History -----")
     
     if not history:
-        print("No history data to display.")
+        print("No history was generated.")
         return
 
-    for entry in history:
-        level = entry['level']
-        sizes = sorted(entry['component_sizes'], reverse=True)
-        num_components = len(sizes)
-        largest_comp = entry['largest_component']
-        avg_size = entry['avg_component_size']
-        exec_time = entry['time']
+    # Create a lookup for cumulative time per level to calculate per-level time
+    level_timestamps = {h['level']: h['time'] for h in history}
 
-        print(f"\n----- Level {level} -----")
-        print(f"  - Components: {num_components}")
-        print(f"  - Largest Component: {largest_comp} nodes")
-        print(f"  - Average Size: {avg_size:.2f} nodes")
-        print(f"  - Time Elapsed: {exec_time:.4f}s")
-        if num_components > 1:
+    for item in history:
+        print(f"----- Level {item['level']} -----")
+        print(f"  - Components: {len(item['component_sizes'])}")
+        print(f"  - Largest Component: {item['largest_component']} nodes")
+        print(f"  - Average Size: {item['avg_component_size']:.2f} nodes")
+        
+        # Calculate the time spent just for this level
+        current_level = item['level']
+        cumulative_time = item['time']
+        prev_level_time = level_timestamps.get(current_level - 1, 0)
+        time_for_level = cumulative_time - prev_level_time
+        
+        print(f"  - Time for this Level: {time_for_level:.4f}s")
+        print(f"  - Time Elapsed (Cumulative): {cumulative_time:.4f}s")
+        
+        # Show all component sizes for this level
+        sizes = sorted(item['component_sizes'], reverse=True)
+        # To avoid spamming the console, only show all sizes if there are <= 10 components
+        if len(sizes) > 10:
+            print(f"  - Component Sizes: {sizes[:5]}... (and {len(sizes) - 5} more)")
+        else:
             print(f"  - All Component Sizes: {sizes}")
-            
-    print("\n" + "="*50)
 
 def main():
-    """Main function to run the clustering and plotting."""
-    parser = argparse.ArgumentParser(description="Graph Clustering Algorithms")
-    parser.add_argument(
-        'dataset', 
-        choices=['karate', 'powergrid', 'erdos'],
-        help='The dataset to run the clustering algorithm on.'
-    )
-    #args = parser.parse_args()
-    dataset = 'karate'
+    """Main function to run the clustering and plotting for all datasets."""
+    datasets = ['karate', 'powergrid', 'erdos']
 
-    print(f"Running clustering for the '{dataset}' dataset...")
+    for dataset in datasets:
+        print(f"\n\n{'='*20} Running clustering for the '{dataset}' dataset... {'='*20}")
 
-    graph = None
-    cluster_func = None
+        graph = None
+        cluster_func = None
 
-    if dataset == 'karate':
-        graph = load_karate_graph()
-        cluster_func = karate.cluster
-    elif dataset == 'powergrid':
-        # Placeholder: a real implementation would load a powergrid graph
-        # graph = load_powergrid_graph() 
-        cluster_func = powergrid.cluster
-    elif dataset == 'erdos':
-        # Placeholder: a real implementation would generate an Erdos-Renyi graph
-        # graph = nx.erdos_renyi_graph(n=100, p=0.1)
-        cluster_func = erdos.cluster
+        if dataset == 'karate':
+            graph = load_karate_graph()
+            cluster_func = karate.cluster
+        elif dataset == 'powergrid':
+            graph = load_powergrid_graph()
+            cluster_func = powergrid.cluster
+        elif dataset == 'erdos':
+            graph = load_erdos_graph()
+            cluster_func = erdos.cluster
 
-    if graph is None and dataset != 'powergrid' and dataset != 'erdos':
-        print(f"Could not load graph for dataset: {dataset}")
-        return
+        if graph is None:
+            print(f"Could not load graph for dataset: {dataset}")
+            continue
 
-    # Run the clustering algorithm
-    results = cluster_func(graph)
+        # Run the clustering algorithm
+        results = cluster_func(graph)
 
-    linkage_matrix = None
-    if dataset == 'karate':
-        final_clusters, history, linkage_matrix = results
-    else:
-        final_clusters, history = results
+        # The 'karate' dataset returns a linkage matrix, the others do not.
+        if dataset == 'karate':
+            final_clusters, history, linkage_matrix = results
+        else:
+            final_clusters, history = results
+            linkage_matrix = None # Ensure linkage_matrix is defined
 
-    # Log the results to the console
-    if history:
-        log_clustering_history(history)
-
-    # Generate plots if history is available
-    if history:
-        print("\nClustering complete. Generating plots...")
-        generate_plots(history, linkage_matrix, final_clusters, dataset)
-        print(f"\nFound {len(final_clusters)} final clusters.")
-        print("Final cluster sizes:", [len(c) for c in final_clusters])
-    else:
-        print("Clustering function did not return data for plotting.")
+        # Log the results to the console if a history was generated
+        if history:
+            log_clustering_history(history)
+            print("\nClustering complete. Generating plots...")
+            generate_plots(graph, history, linkage_matrix, final_clusters, dataset)
+        
+        print(f"\nFound {len(final_clusters)} final clusters for '{dataset}'.")
+        print("Final cluster sizes:", sorted([len(c) for c in final_clusters], reverse=True))
 
 if __name__ == '__main__':
     main() 
